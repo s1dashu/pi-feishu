@@ -1,0 +1,15 @@
+node_modules/
+dist/
+AGENTS.md
+agents.md
+coverage/
+.nyc_output/
+*.log
+*.tsbuildinfo
+.DS_Store
+.env
+.env.*
+!.env.example
+*.local
+.idea/
+.vscode/
