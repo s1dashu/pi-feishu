@@ -1,0 +1,54 @@
+{
+	"name": "@s1dashu/pi-feishu",
+	"version": "0.1.2",
+	"publishConfig": {
+		"access": "public"
+	},
+	"description": "Pi Coding Agent channel for Feishu (Lark): WebSocket bot and IM sessions.",
+	"license": "MIT",
+	"type": "module",
+	"engines": {
+		"node": ">=20"
+	},
+	"keywords": [
+		"pi",
+		"pi-coding-agent",
+		"feishu",
+		"lark",
+		"bot"
+	],
+	"bin": {
+		"pi-feishu": "dist/cli.js"
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"LICENSE"
+	],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"check": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
+		"build": "npm run clean && tsc -p tsconfig.json && shx chmod +x dist/cli.js dist/channels/feishu/main.js",
+		"prepublishOnly": "npm run check && npm run build",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"start": "tsx src/cli.ts",
+		"start:onboard": "tsx src/cli.ts --onboard",
+		"dev": "PI_FEISHU_RUN_MODE=dev tsx src/cli.ts"
+	},
+	"dependencies": {
+		"@clack/prompts": "^1.2.0",
+		"@larksuiteoapi/node-sdk": "^1.60.0",
+		"@mariozechner/pi-agent-core": "^0.70.2",
+		"@mariozechner/pi-ai": "^0.70.2",
+		"@mariozechner/pi-coding-agent": "^0.70.2",
+		"chalk": "^5.6.2"
+	},
+	"devDependencies": {
+		"@types/node": "^24.3.0",
+		"shx": "^0.4.0",
+		"tsx": "^4.20.3",
+		"typescript": "^5.9.2",
+		"vitest": "^3.2.4"
+	}
+}
