@@ -19,7 +19,7 @@ Connect **[pi-coding-agent](https://www.npmjs.com/package/@mariozechner/pi-codin
 - [Feishu / Lark app setup](#feishu--lark-app-setup)
 - [First-time setup](#first-time-setup)
 - [Daily use](#daily-use)
-- `[npx` vs global install](#npx-vs-global-install)
+- [npx vs global install](#npx-vs-global-install)
 - [Where data lives](#where-data-lives)
 - [More verbose logs](#more-verbose-logs)
 - [FAQ](#faq)
@@ -31,8 +31,6 @@ Connect **[pi-coding-agent](https://www.npmjs.com/package/@mariozechner/pi-codin
 **Pi Agent users who want to run Pi Coding Agent inside Feishu / Lark** (as a bot).
 
 **This package provides:** event and message handling, a session pool integrated with pi-coding-agent, and an interactive onboarding wizard.
-
-**Out of scope:** a hosted “control plane”, HTTP agent gateway, custom system-prompt file layers, cron/workflow orchestration—you’d build or choose that separately.
 
 ### What you need
 
@@ -64,7 +62,7 @@ This bot talks to **open.feishu.cn** (Feishu, China) or **open.larksuite.com** (
   Add the IM permissions your bot needs (receive/send messages, groups, etc.). Exact scope names change over time—use the console’s permission list and Feishu docs for **instant messaging**.
 6. **Event subscription — use long connection (required)**
   In **Events → Subscription mode**, choose **Long connection / WebSocket (长连接)**.  
-   This project maintains an outbound WebSocket to Feishu;   
+   This project maintains an outbound WebSocket to Feishu;  
    Under **Added events**, click **Add event** and subscribe to `**im.message.receive_v1`** (the console may label it **Receive message v2.0 / 接收消息 v2.0**). Grant the IM scopes it lists (e.g. read user→bot DMs and group messages where the bot is @-mentioned).  
    Without this event, the process may log `event-dispatch is ready` but **never receive chats**.
 7. **Publish / release**
@@ -138,7 +136,7 @@ Upgrade later with the same `npm install -g` command.
 
 - **Default:** `~/.pi-feishu` → `config.json`, `.env`, and session data managed by the app.
 
-**Single source for bot settings:** Feishu **App ID**, **App Secret**, **region (brand)**, **model**, **tools**, etc. are read **only** from `config.json` → `**profile`**. Provider API keys belong in the same file’s `**env**` object (onboard writes them there); those keys are applied to `process.env` and override the shell / `.env` for the same name.
+**Single source for bot settings:** Feishu **App ID**, **App Secret**, **region (brand)**, **model**, **tools**, etc. are read **only** from the `**profile`** object in `config.json`. Provider API keys belong in the same file’s `**env**` object (onboard writes them there); those keys are applied to `process.env` and override the shell / `.env` for the same name.
 
 - If the wizard used **another directory**, point the same path on every start:
   ```bash
@@ -224,8 +222,7 @@ Release: bump `version`, then `npm publish` (runs check + build).
 
 **适合：Pi Agent 的忠实用户，希望在飞书 / Lark 里使用 Pi Coding Agent（机器人形态）。**
 
-**本包提供：** 事件与消息处理、与 pi-coding-agent 的会话池、交互式配置向导。  
-**本包不提供：** 官方式「一站式控制台」、HTTP Agent 网关、自定义 system 文件层、定时任务编排——需你在上层自建或选用其他方案。
+**本包提供：** 事件与消息处理、与 pi-coding-agent 的会话池、交互式配置向导。
 
 ### 开始前你要有什么
 
