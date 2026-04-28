@@ -34,16 +34,7 @@ Connect **[pi-coding-agent](https://www.npmjs.com/package/@mariozechner/pi-codin
 
 ### What you need
 
-1. **Node.js 20+**
-  ```bash
-   node -v
-  ```
-   If the command is missing, install **LTS** from [nodejs.org](https://nodejs.org/), then **open a new terminal**.
-2. **npm** (usually ships with Node):
-  ```bash
-   npm -v
-  ```
-3. A **Feishu / Lark custom app** configured as below (you need **App ID**, **App Secret**, and **long-connection event subscription**).
+**Node.js 20+** with **npm**, and a **Feishu / Lark custom app** configured below (**App ID**, **App Secret**, long-connection events, IM scopes).
 
 ### Feishu / Lark app setup
 
@@ -136,7 +127,7 @@ Upgrade later with the same `npm install -g` command.
 
 - **Default:** `~/.pi-feishu` → `config.json`, `.env`, and session data managed by the app.
 
-**Single source for bot settings:** Feishu **App ID**, **App Secret**, **region (brand)**, **model**, **tools**, etc. are read **only** from the `**profile`** object in `config.json`. Provider API keys belong in the same file’s `**env**` object (onboard writes them there); those keys are applied to `process.env` and override the shell / `.env` for the same name.
+**Single source for bot settings:** Feishu **App ID**, **App Secret**, **region (brand)**, **model**, **tools**, etc. are read **only** from the `**profile`** object in `config.json`. Provider API keys belong in the same file’s `**env`** object (onboard writes them there); those keys are applied to `process.env` and override the shell / `.env` for the same name.
 
 - If the wizard used **another directory**, point the same path on every start:
   ```bash
@@ -226,16 +217,7 @@ Release: bump `version`, then `npm publish` (runs check + build).
 
 ### 开始前你要有什么
 
-1. **Node.js 20 或以上**
-  ```bash
-   node -v
-  ```
-   若提示找不到命令，请从 [Node.js 官网](https://nodejs.org/) 安装 **LTS**，装好后**重新打开**终端。
-2. **npm**（一般随 Node 安装）：
-  ```bash
-   npm -v
-  ```
-3. **飞书 / Lark 自建应用**：需按下一节在开放平台完成配置（含 **App ID / App Secret**、**长连接事件订阅** 等）。
+**Node.js 20+**（有 npm 即可）和下一节里配好的 **飞书 / Lark 自建应用**（**App ID / App Secret**、长连接事件订阅及所需 IM 权限）。
 
 ### 飞书 / Lark 应用配置
 
@@ -255,8 +237,8 @@ Release: bump `version`, then `npm publish` (runs check + build).
 6. **事件订阅 — 必须使用长连接（重要）**
   在 **事件与回调 → 订阅方式** 中选择 **使用长连接接收事件**（WebSocket）。  
    本客户端通过**长连接**收事件；  
-   在 **已添加事件** 中点击 **添加事件**，搜索并订阅 `**im.message.receive_v1`**（控制台可能显示为 **接收消息 v2.0**）。按提示开通所需即时消息权限（例如读取用户发给机器人的单聊、群聊中 @ 机器人的消息等）。  
-   若未添加该事件，终端可能出现 `**event-dispatch is ready`** 但**始终收不到会话消息**。
+   在 **已添加事件** 中点击 **添加事件**，搜索并订阅 `**im.message.receive_v1`**（控制台可能显示为 接收消息 v2.0）。按提示开通所需即时消息权限（例如读取用户发给机器人的单聊、群聊中 @ 机器人的消息等）。**  
+   **若未添加该事件，终端可能出现 `**event-dispatch is ready`** 但**始终收不到会话消息**。
 7. **版本发布**
   若后台有「创建版本 / 申请发布」，需**发布**后租户内配置才生效（以你司后台实际流程为准）。
 
@@ -313,7 +295,7 @@ pi-feishu
 
 - 默认 **~/.pi-feishu**：`config.json`、`.env` 及会话数据。
 
-**单一数据源：** 飞书 **App ID / Secret**、**区域（brand）**、**模型**、**工具预设** 等只从 `config.json` 的 `**profile`** 读取。大模型等 API Key 写在同文件的 `**env**`（向导会写入）；这些键会进入 `process.env` 并覆盖 shell / `.env` 中的同名变量。
+**单一数据源：** 飞书 **App ID / Secret**、**区域（brand）**、**模型**、**工具预设** 等只从 `config.json` 的 `**profile`** 读取。大模型等 API Key 写在同文件的 `**env`**（向导会写入）；这些键会进入 `process.env` 并覆盖 shell / `.env` 中的同名变量。
 
 - 若向导选了其他路径，每次启动需指向**同一路径**：
   ```bash
