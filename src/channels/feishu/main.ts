@@ -32,7 +32,8 @@ const conversations = new Map<string, ConversationController>();
 const WORKING_REACTION = "Get";
 const MAX_MESSAGE_EDITS = 20;
 const STREAM_UPDATE_DEBOUNCE_MS = 400;
-const TOOL_CALL_DETAIL_MAX = 2000;
+/** Max characters per tool-call line sent to Feishu (emoji + text). */
+const TOOL_CALL_IM_MAX = 100;
 const DEFAULT_TOOL_IM_EMOJI = "🖥️";
 let currentBotOpenId: string | undefined;
 /** Set in `main` so signal handlers can force-close the Feishu WS without waiting on `startWS` promise edges. */
@@ -83,6 +84,10 @@ interface ToolRunImBlock {
 
 function truncate(text: string, max = 600): string {
 	return text.length > max ? `${text.slice(0, max)}...` : text;
+}
+
+function capToolImLine(line: string): string {
+	return truncate(line, TOOL_CALL_IM_MAX);
 }
 
 function printStartupSummary(): void {
@@ -138,38 +143,40 @@ function formatToolImLine(toolName: string, args: unknown): string {
 
 	if (base === "bash") {
 		const cmd = typeof rec.command === "string" ? rec.command.trim().replace(/\s+/g, " ") : "";
-		const shown = cmd ? truncate(cmd, TOOL_CALL_DETAIL_MAX) : "(no command)";
-		return `${emoji} bash ${shown}`;
+		const shown = cmd ? cmd : "(no command)";
+		return capToolImLine(`${emoji} bash ${shown}`);
 	}
 	if (base === "read" || base === "write" || base === "edit") {
 		const pathStr = typeof rec.path === "string" ? rec.path : "";
-		return `${emoji} ${base} ${imBasename(pathStr || "(no path)")}`;
+		return capToolImLine(`${emoji} ${base} ${imBasename(pathStr || "(no path)")}`);
 	}
 	if (base === "grep") {
 		const pat = typeof rec.pattern === "string" ? rec.pattern.trim().replace(/\s+/g, " ") : "";
 		const pathStr = typeof rec.path === "string" ? rec.path.trim() : "";
 		const tail = pathStr ? ` ${imBasename(pathStr)}` : "";
-		return `${emoji} grep ${pat ? truncate(pat, 600) : "?"}` + tail;
+		return capToolImLine(`${emoji} grep ${pat ? pat : "?"}${tail}`);
 	}
 	if (base === "find") {
 		const pathStr = typeof rec.path === "string" ? rec.path.trim() : "";
 		const pat = typeof rec.pattern === "string" ? rec.pattern.trim() : "";
 		const head = pathStr ? imBasename(pathStr) : ".";
-		return `${emoji} find ${pat ? `${head} ${truncate(pat.replace(/\s+/g, " "), 400)}` : head}`;
+		return capToolImLine(`${emoji} find ${pat ? `${head} ${pat.replace(/\s+/g, " ")}` : head}`);
 	}
 	if (base === "ls") {
 		const pathStr = typeof rec.path === "string" ? rec.path.trim() : "";
-		return `${emoji} ls ${pathStr ? imBasename(pathStr) : "."}`;
+		return capToolImLine(`${emoji} ls ${pathStr ? imBasename(pathStr) : "."}`);
 	}
 
 	const hint = firstStringFieldForIm(rec);
-	return hint ? `${emoji} ${base} ${hint}` : `${emoji} ${toolName.replace(/\s+error$/i, "").trim()}`;
+	return capToolImLine(
+		hint ? `${emoji} ${base} ${hint}` : `${emoji} ${toolName.replace(/\s+error$/i, "").trim()}`,
+	);
 }
 
 function firstStringFieldForIm(rec: Record<string, unknown>): string {
 	for (const v of Object.values(rec)) {
 		if (typeof v === "string" && v.trim()) {
-			return truncate(v.trim().replace(/\s+/g, " "), 500);
+			return v.trim().replace(/\s+/g, " ");
 		}
 	}
 	return "";
@@ -180,7 +187,7 @@ function formatToolImErrorSummary(result: unknown): string {
 		return "";
 	}
 	if (typeof result === "string") {
-		return truncate(result.trim().replace(/\s+/g, " "), TOOL_CALL_DETAIL_MAX);
+		return result.trim().replace(/\s+/g, " ");
 	}
 	if (typeof result === "object") {
 		const r = result as Record<string, unknown>;
@@ -196,20 +203,20 @@ function formatToolImErrorSummary(result: unknown): string {
 				}
 			}
 			if (parts.length) {
-				return truncate(parts.join(" ").replace(/\s+/g, " "), TOOL_CALL_DETAIL_MAX);
+				return parts.join(" ").replace(/\s+/g, " ");
 			}
 		}
 		if (typeof r.message === "string" && r.message.trim()) {
-			return truncate(r.message.trim().replace(/\s+/g, " "), TOOL_CALL_DETAIL_MAX);
+			return r.message.trim().replace(/\s+/g, " ");
 		}
 	}
-	return truncate(String(result).replace(/\s+/g, " "), TOOL_CALL_DETAIL_MAX);
+	return String(result).replace(/\s+/g, " ");
 }
 
 function formatToolImErrorLine(toolName: string, result: unknown): string {
 	const emoji = toolCallImEmoji(`${toolName} error`);
 	const msg = formatToolImErrorSummary(result);
-	return msg ? `${emoji} ${toolName} error ${msg}` : `${emoji} ${toolName} error`;
+	return capToolImLine(msg ? `${emoji} ${toolName} error ${msg}` : `${emoji} ${toolName} error`);
 }
 
 function toQuotedMarkdown(label: string, body: string): string {
