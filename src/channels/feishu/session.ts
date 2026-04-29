@@ -219,6 +219,7 @@ export class SessionPool {
 		mkdirSync(conversationDir, { recursive: true });
 		const sessionHistoryDir = getPiSessionHistoryDir(conversationDir, this.options.homeDir);
 		mkdirSync(sessionHistoryDir, { recursive: true });
+		const configuredModel = this.options.model;
 		const resourceLoader = new DefaultResourceLoader({
 			cwd: this.options.homeDir,
 			agentDir: conversationDir,
@@ -226,8 +227,13 @@ export class SessionPool {
 			systemPromptOverride: (base) => {
 				const feishuIm =
 					"## Feishu / Lark IM\nNever output Markdown tables; the client does not render them reliably. Use plain paragraphs, numbered lists, or bullet lists instead.";
+				const backend =
+					configuredModel != null
+						? `## Session backend (pi-feishu)\nRequests use provider \`${String(configuredModel.provider)}\` and model id \`${configuredModel.id}\` (OpenAI-compatible transport only describes the HTTP API; the underlying engine may differ). In Feishu, present yourself as the user's coding assistant; do not insist you are a particular vendor-branded chatbot unless the user asks or the model id clearly names that vendor.`
+						: "## Session backend (pi-feishu)\nYou are the user's coding assistant in Feishu.";
 				const head = base?.trim() ?? "";
-				return head ? `${head}\n\n${feishuIm}` : feishuIm;
+				const tail = `${feishuIm}\n\n${backend}`;
+				return head ? `${head}\n\n${tail}` : tail;
 			},
 		});
 		const reloadStartedAt = Date.now();
@@ -308,4 +314,21 @@ export function extractAssistantText(session: AgentSession): string {
 	}
 
 	return "";
+}
+
+export function extractLastAssistantError(session: AgentSession): string | undefined {
+	const messages = [...session.state.messages].reverse();
+	for (const message of messages) {
+		const typedMessage = message as { role?: string; stopReason?: string; errorMessage?: unknown };
+		if (typedMessage.role !== "assistant") {
+			continue;
+		}
+		if (typedMessage.stopReason !== "error") {
+			return undefined;
+		}
+		return typeof typedMessage.errorMessage === "string" && typedMessage.errorMessage.trim()
+			? typedMessage.errorMessage.trim()
+			: "Model provider returned an error without details.";
+	}
+	return undefined;
 }

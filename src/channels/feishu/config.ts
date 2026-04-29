@@ -1,5 +1,7 @@
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
-import { getModel, type Model } from "@mariozechner/pi-ai";
+import { join } from "node:path";
+import type { Model } from "@mariozechner/pi-ai";
+import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
 import { loadAgentEnvIntoProcess, resolveAgentHomeDir } from "../../core/agent-home.js";
 import { getStoredProfile, loadConfigStore, type PiFeishuConfigStore } from "../../core/config-store.js";
 import type { LarkConfig } from "./platform/index.js";
@@ -17,7 +19,7 @@ const VALID_TOOL_NAMES = new Set<BuiltinToolName>(ALL_BUILTIN_TOOL_NAMES);
 export interface FeishuBotConfig {
 	homeDir: string;
 	feishu: LarkConfig;
-	model?: Model<any>;
+	model: Model<any>;
 	modelLabel: string;
 	thinkingLevel: ThinkingLevel;
 	/** Tool name allowlist for `createAgentSession` (pi-coding-agent 0.70+). */
@@ -144,7 +146,15 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): FeishuBotCon
 
 	const provider = m.provider.trim();
 	const modelId = m.model.trim();
-	const model = getModel(provider as never, modelId);
+	const homeDir = resolveAgentHomeDir();
+	const modelRegistry = ModelRegistry.create(AuthStorage.inMemory(), join(homeDir, "models.json"));
+	modelRegistry.refresh();
+	const model = modelRegistry.find(provider, modelId);
+	if (!model) {
+		throw new Error(
+			`config.json: model ${provider}/${modelId} was not found. If this is a custom provider, ensure ${homeDir}/models.json defines providers.${provider} with model id "${modelId}".`,
+		);
+	}
 	const modelLabel = `${provider}/${modelId}`;
 
 	const { tools, label: toolLabel } = resolveTools(m.tools ?? "coding");
@@ -153,7 +163,6 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): FeishuBotCon
 	const resumeSessions = m.resumeSessions !== false;
 	const outputToolCallsToIm = m.outputToolCallsToIm !== false;
 
-	const homeDir = resolveAgentHomeDir();
 	const runMode = resolveRunMode();
 
 	return {

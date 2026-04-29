@@ -14,7 +14,7 @@ import {
 	MessageDedup,
 	shouldHandleMessage,
 } from "./messages.js";
-import { extractAssistantText, SessionPool } from "./session.js";
+import { extractAssistantText, extractLastAssistantError, SessionPool } from "./session.js";
 
 const config = loadConfig();
 const dedup = new MessageDedup();
@@ -831,6 +831,10 @@ class ConversationController {
 			logTurnTiming(this.conversationKey, "prompt_start", promptStartedAt - request.receivedAtMs);
 			await session.prompt(request.promptText);
 			if (!request.interrupted && !wasLastAssistantMessageAborted(session)) {
+				const providerError = extractLastAssistantError(session);
+				if (providerError) {
+					throw new Error(providerError);
+				}
 				const responseText = extractAssistantText(session);
 				await request.reporter.finish(responseText);
 				logTurnTiming(

@@ -6,7 +6,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as p from "@clack/prompts";
@@ -67,7 +67,184 @@ const PROVIDER_CREDENTIAL_ENV: Record<string, string> = {
 	"azure-openai-responses": "AZURE_OPENAI_API_KEY",
 	"github-copilot": "COPILOT_GITHUB_TOKEN",
 	"amazon-bedrock": "AWS_BEARER_TOKEN_BEDROCK",
+	/** OpenAI-compatible proxy defined in `<agent-home>/models.json` by onboard. */
+	"pi-feishu-openai-proxy": "PI_FEISHU_OPENAI_PROXY_API_KEY",
+	/** Codex Responses proxy defined in `<agent-home>/models.json` by onboard. */
+	"pi-feishu-codex-proxy": "PI_FEISHU_CODEX_PROXY_API_KEY",
 };
+
+/** Provider id written to `models.json` for OpenAI-compatible HTTP proxies. */
+const PROXY_OPENAI_PROVIDER_ID = "pi-feishu-openai-proxy";
+const PROXY_OPENAI_ENV_KEY = "PI_FEISHU_OPENAI_PROXY_API_KEY";
+const PROXY_CODEX_PROVIDER_ID = "pi-feishu-codex-proxy";
+const PROXY_CODEX_ENV_KEY = "PI_FEISHU_CODEX_PROXY_API_KEY";
+
+export function normalizeOpenAiCompatibleBaseUrl(raw: string): string {
+	return raw.trim().replace(/\/+$/, "");
+}
+
+export function normalizeOpenAiResponsesBaseUrl(raw: string): string {
+	return raw.trim().replace(/\/+$/, "");
+}
+
+type ModelsJsonRoot = {
+	providers?: Record<string, unknown>;
+};
+
+function mergeOpenAiProxyIntoModelsJson(
+	homeDir: string,
+	baseUrl: string,
+	modelId: string,
+): void {
+	mergeProxyIntoModelsJson(homeDir, PROXY_OPENAI_PROVIDER_ID, {
+		baseUrl,
+		api: "openai-completions",
+		apiKey: PROXY_OPENAI_ENV_KEY,
+		compat: {
+			supportsDeveloperRole: false,
+			supportsReasoningEffort: false,
+		},
+		models: [{ id: modelId }],
+	});
+}
+
+function mergeCodexProxyIntoModelsJson(
+	homeDir: string,
+	baseUrl: string,
+	modelId: string,
+): void {
+	mergeProxyIntoModelsJson(homeDir, PROXY_CODEX_PROVIDER_ID, {
+		baseUrl,
+		api: "openai-responses",
+		apiKey: PROXY_CODEX_ENV_KEY,
+		models: [
+			{
+				id: modelId,
+				reasoning: true,
+				contextWindow: 272000,
+				maxTokens: 128000,
+			},
+		],
+	});
+}
+
+function mergeProxyIntoModelsJson(homeDir: string, providerId: string, providerConfig: unknown): void {
+	const path = join(homeDir, "models.json");
+	let root: ModelsJsonRoot = {};
+	if (existsSync(path)) {
+		try {
+			const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+			if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+				root = parsed as ModelsJsonRoot;
+			}
+		} catch {
+			p.log.warn(`Could not parse existing models.json; overwriting structure at ${path}`);
+		}
+	}
+	if (!root.providers || typeof root.providers !== "object") {
+		root.providers = {};
+	}
+	root.providers[providerId] = providerConfig;
+	writeFileSync(path, `${JSON.stringify(root, null, 2)}\n`, "utf8");
+}
+
+async function pickOpenAiCompatibleProxy(homeDir: string): Promise<{
+	provider: string;
+	modelId: string;
+	preloadedEnv: Record<string, string>;
+}> {
+	const baseRaw = stringOrCancel(
+		await p.text({
+			message: "OpenAI-compatible API base URL",
+			placeholder: "https://your-gateway.example.com",
+		}),
+	).trim();
+	if (!baseRaw) {
+		throw new Error("API base URL is required");
+	}
+	const baseUrl = normalizeOpenAiCompatibleBaseUrl(baseRaw);
+	if (!baseUrl) {
+		throw new Error("API base URL is required");
+	}
+
+	const modelId = stringOrCancel(
+		await p.text({
+			message: "Model id (as your API expects, e.g. gpt-4o or a deployment name)",
+			placeholder: "gpt-4o-mini",
+		}),
+	).trim();
+	if (!modelId) {
+		throw new Error("Model id is required");
+	}
+
+	const keyRaw = stringOrCancel(
+		await p.password({
+			message: `${PROXY_OPENAI_ENV_KEY} (stored in config.json → env; referenced from models.json)`,
+			mask: "*",
+		}),
+	).trim();
+	if (!keyRaw) {
+		p.log.warn(
+			`No API key saved; set ${PROXY_OPENAI_ENV_KEY} in shell or re-run onboard. Model calls will fail until then.`,
+		);
+	}
+
+	mergeOpenAiProxyIntoModelsJson(homeDir, baseUrl, modelId);
+
+	return {
+		provider: PROXY_OPENAI_PROVIDER_ID,
+		modelId,
+		preloadedEnv: keyRaw ? { [PROXY_OPENAI_ENV_KEY]: keyRaw } : {},
+	};
+}
+
+async function pickCodexProxy(homeDir: string): Promise<{
+	provider: string;
+	modelId: string;
+	preloadedEnv: Record<string, string>;
+}> {
+	const baseRaw = stringOrCancel(
+		await p.text({
+			message: "OpenAI Responses-compatible base URL",
+			placeholder: "https://your-gateway.example.com/v1",
+		}),
+	).trim();
+	const baseUrl = normalizeOpenAiResponsesBaseUrl(baseRaw);
+	if (!baseUrl) {
+		throw new Error("API base URL is required");
+	}
+
+	const modelId = stringOrCancel(
+		await p.text({
+			message: "Responses model id (as your API expects)",
+			placeholder: "gpt-5.5",
+			defaultValue: "gpt-5.5",
+		}),
+	).trim();
+	if (!modelId) {
+		throw new Error("Model id is required");
+	}
+
+	const keyRaw = stringOrCancel(
+		await p.password({
+			message: `${PROXY_CODEX_ENV_KEY} (stored in config.json → env; referenced from models.json)`,
+			mask: "*",
+		}),
+	).trim();
+	if (!keyRaw) {
+		p.log.warn(
+			`No API key saved; set ${PROXY_CODEX_ENV_KEY} in shell or re-run onboard. Model calls will fail until then.`,
+		);
+	}
+
+	mergeCodexProxyIntoModelsJson(homeDir, baseUrl, modelId);
+
+	return {
+		provider: PROXY_CODEX_PROVIDER_ID,
+		modelId,
+		preloadedEnv: keyRaw ? { [PROXY_CODEX_ENV_KEY]: keyRaw } : {},
+	};
+}
 
 function assertValue<T>(value: T | symbol, cancelMessage = "Cancelled"): T {
 	if (isCancel(value)) {
@@ -131,17 +308,43 @@ function getBotLaunchCommand(): { execPath: string; argv: string[] } {
 async function pickProviderAndModel(
 	homeDir: string,
 	exModel: ModelProfile | undefined,
-): Promise<{ provider: string; modelId: string }> {
+): Promise<{ provider: string; modelId: string; preloadedEnv: Record<string, string> }> {
 	const mode = assertValue(
-		await p.select<"list" | "manual">({
+		await p.select<"list" | "manual" | "proxy">({
 			message: "Model setup",
 			options: [
 				{ value: "list", label: "Choose from Pi model catalog", hint: "Recommended" },
 				{ value: "manual", label: "Type provider and model id manually" },
+				{ value: "proxy", label: "Custom API endpoint (proxy)", hint: "OpenAI/Codex-compatible" },
 			],
 			initialValue: "list",
 		}),
 	);
+
+	if (mode === "proxy") {
+		const apiStyle = assertValue(
+			await p.select<"openai" | "codex">({
+				message: "Which API does this endpoint speak?",
+				options: [
+					{
+						value: "openai",
+						label: "OpenAI-compatible (Chat Completions)",
+						hint: "/v1/chat/completions",
+					},
+					{
+						value: "codex",
+						label: "OpenAI Responses-compatible",
+						hint: "/v1/responses, Codex-style models",
+					},
+				],
+				initialValue: "openai",
+			}),
+		);
+		if (apiStyle === "codex") {
+			return await pickCodexProxy(homeDir);
+		}
+		return await pickOpenAiCompatibleProxy(homeDir);
+	}
 
 	if (mode === "manual") {
 		const defProv = exModel?.provider ?? "kimi-coding";
@@ -164,7 +367,7 @@ async function pickProviderAndModel(
 				}),
 			).trim() || defModel;
 
-		return { provider, modelId };
+		return { provider, modelId, preloadedEnv: {} };
 	}
 
 	const spin = p.spinner();
@@ -204,7 +407,7 @@ async function pickProviderAndModel(
 		if (!modelId) {
 			throw new Error("Model id is required");
 		}
-		return { provider, modelId };
+		return { provider, modelId, preloadedEnv: {} };
 	}
 
 	const modelItems = modelsForProv.map((m) => ({
@@ -226,7 +429,7 @@ async function pickProviderAndModel(
 		}),
 	);
 
-	return { provider, modelId };
+	return { provider, modelId, preloadedEnv: {} };
 }
 
 export async function runOnboard(argv: string[]): Promise<void> {
@@ -312,7 +515,7 @@ export async function runOnboard(argv: string[]): Promise<void> {
 		}),
 	);
 
-	const { provider, modelId } = await pickProviderAndModel(homeDir, exModel);
+	const { provider, modelId, preloadedEnv: modelPreloadedEnv } = await pickProviderAndModel(homeDir, exModel);
 
 	const defThink = exModel?.thinkingLevel ?? "off";
 	const thinkingLevel = assertValue(
@@ -346,9 +549,14 @@ export async function runOnboard(argv: string[]): Promise<void> {
 	const credEnv = PROVIDER_CREDENTIAL_ENV[provider];
 	const existingProviderKey =
 		(credEnv ? process.env[credEnv]?.trim() || store.env?.[credEnv]?.trim() : undefined) || "";
-	const extraEnv: Record<string, string> = {};
+	const extraEnv: Record<string, string> = { ...modelPreloadedEnv };
+	if (credEnv && modelPreloadedEnv[credEnv]) {
+		p.log.info(`Using API key from proxy setup (${credEnv}).`);
+	}
 	if (credEnv) {
-		if (existingProviderKey) {
+		if (extraEnv[credEnv]) {
+			// Key already supplied (e.g. OpenAI-compatible proxy path).
+		} else if (existingProviderKey) {
 			p.log.info(
 				`${credEnv} is already set (shell or saved config). You can skip replacing unless you want a new key in config.`,
 			);
