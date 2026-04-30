@@ -9,11 +9,14 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { styleText } from "node:util";
 import * as p from "@clack/prompts";
 import { isCancel } from "@clack/prompts";
+import * as lark from "@larksuiteoapi/node-sdk";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { Model } from "@mariozechner/pi-ai";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
+import qrcode from "qrcode-terminal";
 import {
 	expandUserHomePath,
 	loadAgentEnvIntoProcess,
@@ -44,6 +47,7 @@ function getNpmPackageName(): string {
 }
 
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
+const BAR = "│";
 
 /** Common provider → API key env name (for optional prompt). */
 const PROVIDER_CREDENTIAL_ENV: Record<string, string> = {
@@ -302,6 +306,157 @@ function getBotLaunchCommand(): { execPath: string; argv: string[] } {
 	);
 }
 
+function printAuthorizationBlock(url: string, expiresIn: number, qr: string): void {
+	const lines = [
+		styleText("bold", "Feishu / Lark authorization"),
+		"",
+		"Use one of these options:",
+		"",
+		"1. Scan this QR code with Feishu/Lark.",
+		...qr.split("\n"),
+		"",
+		"2. Or open this URL:",
+		url,
+		"",
+		`Expires in ${expiresIn} seconds.`,
+	];
+	process.stdout.write(`${lines.map((line) => `${BAR}  ${line}`).join("\n")}\n`);
+}
+
+async function pickFeishuAppCredentials(
+	exCh: PiFeishuProfile["channel"] | undefined,
+): Promise<{
+	appId: string;
+	appSecret: string;
+	brand: "feishu" | "lark";
+	encryptKey?: string;
+	verificationToken?: string;
+}> {
+	const setupMode = assertValue(
+		await p.select<"auto" | "manual">({
+			message: "Feishu / Lark app setup",
+			options: [
+				{ value: "auto", label: "Create a new Feishu assistant", hint: "Recommended" },
+				{ value: "manual", label: "Configure an existing Feishu assistant" },
+			],
+			initialValue: "auto",
+		}),
+	);
+
+	if (setupMode === "auto") {
+		const spin = p.spinner();
+		let qrShown = false;
+		spin.start("Preparing app creation link...");
+		try {
+			const result = await lark.registerApp({
+				source: "pi-feishu",
+				onQRCodeReady(info) {
+					spin.stop("Authorize app creation");
+					qrShown = true;
+					qrcode.generate(info.url, { small: true }, (qr) => {
+						printAuthorizationBlock(info.url, info.expireIn, qr);
+					});
+				},
+				onStatusChange(info) {
+					if (!qrShown) {
+						return;
+					}
+					if (info.status === "domain_switched") {
+						p.log.info("Detected Lark tenant; switching registration domain.");
+					} else if (info.status === "slow_down") {
+						p.log.info(
+							`Authorization polling slowed down${info.interval ? ` to ${info.interval}s` : ""}.`,
+						);
+					}
+				},
+			});
+			const brand = result.user_info?.tenant_brand === "lark" ? "lark" : "feishu";
+			p.log.success(`Created new ${brand === "lark" ? "Lark" : "Feishu"} app ${result.client_id}`);
+			return {
+				appId: result.client_id,
+				appSecret: result.client_secret,
+				brand,
+			};
+		} catch (error) {
+			if (!qrShown) {
+				spin.stop("App creation failed");
+			}
+			const typed = error as { code?: unknown; description?: unknown };
+			throw new Error(
+				typeof typed.code === "string" || typeof typed.description === "string"
+					? `App creation failed: ${String(typed.code ?? "unknown")} ${String(typed.description ?? "")}`.trim()
+					: `App creation failed: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+	}
+
+	const appId = stringOrCancel(
+		await p.text({
+			message: "Feishu App ID",
+			placeholder: exCh?.appId ?? "Required",
+			...(exCh?.appId ? { defaultValue: exCh.appId } : {}),
+		}),
+	).trim();
+	if (!appId) {
+		throw new Error("Feishu App ID is required");
+	}
+
+	const existingSecret = exCh?.appSecret?.trim() ?? "";
+	const appSecret = stringOrCancel(
+		await p.text({
+			message: existingSecret
+				? "Feishu App Secret — press Enter to keep the value below, or type to replace"
+				: "Feishu App Secret",
+			placeholder: existingSecret || "Required",
+			...(existingSecret ? { defaultValue: existingSecret } : {}),
+			validate: (v) => {
+				if (!existingSecret && !(v ?? "").trim()) {
+					return "Feishu App Secret is required";
+				}
+				return undefined;
+			},
+		}),
+	).trim() || existingSecret;
+	if (!appSecret) {
+		throw new Error("Feishu App Secret is required");
+	}
+
+	const encryptKey = stringOrCancel(
+		await p.text({
+			message: "Feishu Encrypt Key (optional)",
+			placeholder: "Leave empty to skip",
+			...(exCh?.encryptKey ? { defaultValue: exCh.encryptKey } : {}),
+		}),
+	).trim() || undefined;
+
+	const verificationToken = stringOrCancel(
+		await p.text({
+			message: "Feishu Verification Token (optional)",
+			placeholder: "Leave empty to skip",
+			...(exCh?.verificationToken ? { defaultValue: exCh.verificationToken } : {}),
+		}),
+	).trim() || undefined;
+
+	const brand = assertValue(
+		await p.select<"feishu" | "lark">({
+			message: "App region",
+			options: [
+				{ value: "feishu", label: "Feishu (China)" },
+				{ value: "lark", label: "Lark (international)" },
+			],
+			initialValue: exCh?.brand === "lark" ? "lark" : "feishu",
+		}),
+	);
+
+	return {
+		appId,
+		appSecret,
+		brand,
+		...(encryptKey ? { encryptKey } : {}),
+		...(verificationToken ? { verificationToken } : {}),
+	};
+}
+
 /**
  * Pi `ModelRegistry` + Clack select/autocomplete, or manual entry.
  */
@@ -457,63 +612,7 @@ export async function runOnboard(argv: string[]): Promise<void> {
 	const exCh = ex?.channel.kind === "feishu" ? ex.channel : undefined;
 	const exModel = ex?.model;
 
-	const appId = stringOrCancel(
-		await p.text({
-			message: "Feishu App ID",
-			placeholder: exCh?.appId ?? "Required",
-			...(exCh?.appId ? { defaultValue: exCh.appId } : {}),
-		}),
-	).trim();
-	if (!appId) {
-		throw new Error("Feishu App ID is required");
-	}
-
-	const existingSecret = exCh?.appSecret?.trim() ?? "";
-	const appSecret = stringOrCancel(
-		await p.text({
-			message: existingSecret
-				? "Feishu App Secret — press Enter to keep the value below, or type to replace"
-				: "Feishu App Secret",
-			placeholder: existingSecret || "Required",
-			...(existingSecret ? { defaultValue: existingSecret } : {}),
-			validate: (v) => {
-				if (!existingSecret && !(v ?? "").trim()) {
-					return "Feishu App Secret is required";
-				}
-				return undefined;
-			},
-		}),
-	).trim() || existingSecret;
-	if (!appSecret) {
-		throw new Error("Feishu App Secret is required");
-	}
-
-	const encryptKey = stringOrCancel(
-		await p.text({
-			message: "Feishu Encrypt Key (optional)",
-			placeholder: "Leave empty to skip",
-			...(exCh?.encryptKey ? { defaultValue: exCh.encryptKey } : {}),
-		}),
-	).trim() || undefined;
-
-	const verificationToken = stringOrCancel(
-		await p.text({
-			message: "Feishu Verification Token (optional)",
-			placeholder: "Leave empty to skip",
-			...(exCh?.verificationToken ? { defaultValue: exCh.verificationToken } : {}),
-		}),
-	).trim() || undefined;
-
-	const brand = assertValue(
-		await p.select<"feishu" | "lark">({
-			message: "App region",
-			options: [
-				{ value: "feishu", label: "Feishu (China)" },
-				{ value: "lark", label: "Lark (international)" },
-			],
-			initialValue: exCh?.brand === "lark" ? "lark" : "feishu",
-		}),
-	);
+	const feishuApp = await pickFeishuAppCredentials(exCh);
 
 	const { provider, modelId, preloadedEnv: modelPreloadedEnv } = await pickProviderAndModel(homeDir, exModel);
 
@@ -603,11 +702,11 @@ export async function runOnboard(argv: string[]): Promise<void> {
 	const profile: PiFeishuProfile = {
 		channel: {
 			kind: "feishu",
-			appId,
-			appSecret,
-			brand,
-			...(encryptKey ? { encryptKey } : {}),
-			...(verificationToken ? { verificationToken } : {}),
+			appId: feishuApp.appId,
+			appSecret: feishuApp.appSecret,
+			brand: feishuApp.brand,
+			...(feishuApp.encryptKey ? { encryptKey: feishuApp.encryptKey } : {}),
+			...(feishuApp.verificationToken ? { verificationToken: feishuApp.verificationToken } : {}),
 		},
 		model: {
 			provider,
